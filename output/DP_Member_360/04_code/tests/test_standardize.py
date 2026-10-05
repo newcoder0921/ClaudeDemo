@@ -61,9 +61,10 @@ def test_value_outside_allowed_list_is_rejected(tmp_path, src_copy):
 
 
 def test_duplicate_primary_key_rows_are_rejected(tmp_path, src_copy):
+    # Duplicate the first member row as read from the file, so no member data is written into the test.
     path = src_copy / "Member.csv"
-    path.write_text(path.read_text(encoding="utf-8")
-                    + "M0001,Avery,Brooks,1/5/2018,Charlotte,NC,28202,Active,Retail\n", encoding="utf-8")
+    first_member = path.read_text(encoding="utf-8").splitlines()[1]
+    path.write_text(path.read_text(encoding="utf-8") + first_member + "\n", encoding="utf-8")
     res = run_build(tmp_path, src_dir=src_copy)
     dupes = res.rejects[(res.rejects["table_name"] == "Member") & (res.rejects["row_key"] == "M0001")]
     assert len(dupes) == 2

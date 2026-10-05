@@ -120,7 +120,7 @@
 | branch_name | Text | VARCHAR(50) | N |  | Uptown | Branch display name. |
 | city | Text | VARCHAR(50) | N |  | Charlotte | Branch city. |
 | state | Code (USPS) | CHAR(2) | N |  | NC | 2-letter state code. |
-| postal_code | Code | CHAR(5) | N |  | 28202 | Keep as text (leading zeros). |
+| postal_code | Code | CHAR(5) | N |  | 28210 | Keep as text (leading zeros). |
 | time_zone | Category | VARCHAR(20) | N |  | Eastern | Eastern, Central. |
 | branch_status | Category | VARCHAR(10) | N |  | Open | Open. |
 
@@ -150,12 +150,12 @@
 | Column | Logical type | Physical type | Null? | Key | Example (raw) | Description / conversion rule |
 |---|---|---|---|---|---|---|
 | member_id | Identifier | VARCHAR(10) | N | PK | M0001 | Source format M + 4 digits. |
-| first_name | Text (PII) | VARCHAR(50) | N |  | Avery | PII — not published in product. |
-| last_name | Text (PII) | VARCHAR(50) | N |  | Brooks | PII — not published in product. |
+| first_name | Text (PII) | VARCHAR(50) | N |  | (PII – not shown) | PII — not published in product. |
+| last_name | Text (PII) | VARCHAR(50) | N |  | (PII – not shown) | PII — not published in product. |
 | join_date | Date | DATE | N |  | 1/5/2018 | Parse M/D/YYYY → ISO date. |
 | city | Text | VARCHAR(50) | N |  | Charlotte | Member city. |
 | state | Code (USPS) | CHAR(2) | N |  | NC | 2-letter state code. |
-| postal_code | Code (PII) | CHAR(5) | N |  | 28202 | Keep as text; quasi-identifier. |
+| postal_code | Code (PII) | CHAR(5) | N |  | (PII – not shown) | Keep as text; quasi-identifier. |
 | member_status | Category | VARCHAR(15) | N |  | Active | Active, Dormant. |
 | member_segment | Category | VARCHAR(20) | N |  | Retail | Retail, Premium, Student, Small Business. |
 

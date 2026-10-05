@@ -17,7 +17,7 @@ def test_product_table_declares_contract_types(result):
 
 
 def test_csv_matches_sample_product_shape(result):
-    with open(config.SAMPLE_PRODUCT_CSV, newline="", encoding="utf-8") as f:
+    with open(config.SAMPLE_PRODUCT_CSV, newline="", encoding="utf-8-sig") as f:
         sample_header = next(csv.reader(f))
     with open(result.out_dir / "member_360.csv", newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))

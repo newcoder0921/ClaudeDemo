@@ -36,7 +36,7 @@ def test_decimal_precision_is_enforced():
     ("BOOLEAN", "false", False),
     ("INT", "20260921", 20260921),
     ("SMALLINT", "2026", 2026),
-    ("CHAR(5)", "28202", "28202"),
+    ("CHAR(5)", "12345", "12345"),
     ("VARCHAR(10)", " A00001 ", "A00001"),
 ])
 def test_parse_value_by_type(physical, raw, expected):
