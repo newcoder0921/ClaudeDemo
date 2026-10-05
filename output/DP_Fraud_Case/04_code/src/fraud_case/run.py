@@ -1,6 +1,7 @@
 """Build DP_Fraud_Case end to end: ingest -> standardize -> lifecycle DQ -> derive -> product DQ -> publish.
 
-    python -m src.fraud_case.run [--src DIR] [--member-ref FILE] [--db FILE] [--out DIR] [--as-of YYYY-MM-DD]
+    python -m src.fraud_case.run [--src DIR] [--member-ref FILE] [--account-ref FILE] [--db FILE] [--out DIR]
+                                 [--as-of YYYY-MM-DD]
     python -m src.fraud_case.run --write-ddl
 """
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from contracts.fraud_case import DQ_EXCEPTIONS, FRAUD_CASE
+from contracts.fraud_case import DQ_EXCEPTIONS, FRAUD_CASE, FRAUD_CASE_STATUS_SNAPSHOT
 from contracts.sources import FRAUD_CASE_EXTRACT, SOURCES
 from src.dp_framework.dq import run_rules
 from src.dp_framework.ingest import ingest_all, raw_table, staged_table
@@ -27,11 +28,12 @@ from . import config
 from .config import Settings
 from .dq_rules import product_rules, source_rules
 from .exceptions import find_exceptions
-from .transform import build_fraud_case, load_member_reference
+from .transform import (build_fraud_case, build_status_snapshot, load_account_reference, load_member_reference,
+                        member_match_rate)
 
 SUCCESS, BLOCKED = "SUCCESS", "BLOCKED"
 EXTRACT = FRAUD_CASE_EXTRACT.name
-DDL_TABLES = [FRAUD_CASE, DQ_EXCEPTIONS, REJECTS, DQ_RESULTS, RUN_LOG]
+DDL_TABLES = [FRAUD_CASE, DQ_EXCEPTIONS, REJECTS, DQ_RESULTS, RUN_LOG, FRAUD_CASE_STATUS_SNAPSHOT]
 CONTRACTS = {**SOURCES, FRAUD_CASE.name: FRAUD_CASE}
 
 
@@ -52,11 +54,12 @@ class RunResult:
 def build(src_dir: Path = config.SOURCE_DIR, member_ref: Path = config.MEMBER_REFERENCE_CSV,
           db_path: Path = config.DB_PATH, out_dir: Path = config.OUT_DIR, as_of: date | None = None,
           settings: Settings = Settings(), batch_id: str | None = None,
-          load_ts: datetime | None = None) -> RunResult:
+          load_ts: datetime | None = None, account_ref: Path = config.ACCOUNT_REFERENCE_CSV) -> RunResult:
     as_of = as_of or date.today()
     batch_id = batch_id or str(uuid.uuid4())
     load_ts = load_ts or datetime.now().replace(microsecond=0)
     member_ids = load_member_reference(member_ref)
+    account_in_core = load_account_reference(account_ref, config.ACCOUNT_SOURCE_SYSTEM)
 
     raw = ingest_all(src_dir, SOURCES, config.SOURCE_FILES, batch_id, load_ts)
     staged, type_rejects = standardize(raw[EXTRACT], FRAUD_CASE_EXTRACT)
@@ -64,12 +67,14 @@ def build(src_dir: Path = config.SOURCE_DIR, member_ref: Path = config.MEMBER_RE
     source_dq = run_rules(source_rules(as_of, settings), {EXTRACT: staged}, CONTRACTS)
     staged = source_dq.frames[EXTRACT]
 
-    product = build_fraud_case(staged, member_ids, as_of, load_ts, batch_id)
-    product_dq = run_rules(product_rules(len(staged)), {FRAUD_CASE.name: product}, CONTRACTS)
+    product = build_fraud_case(staged, member_ids, account_in_core, settings.sla_days_by_priority, as_of, load_ts,
+                               batch_id)
+    rules = product_rules(len(staged), member_match_rate(product), settings)
+    product_dq = run_rules(rules, {FRAUD_CASE.name: product}, CONTRACTS)
     product = product_dq.frames[FRAUD_CASE.name].reset_index(drop=True)
 
     status = BLOCKED if source_dq.blocked or product_dq.blocked else SUCCESS
-    exceptions = find_exceptions(product, settings.critical_sla_days, batch_id)
+    exceptions = find_exceptions(product, batch_id)
     dq_results = pd.concat([source_dq.results, product_dq.results], ignore_index=True).assign(
         dp_batch_id=batch_id, run_ts=load_ts)
     rejects = pd.concat([r for r in (type_rejects, source_dq.rejects, product_dq.rejects) if not r.empty]
@@ -90,6 +95,8 @@ def build(src_dir: Path = config.SOURCE_DIR, member_ref: Path = config.MEMBER_RE
         wh.replace(DQ_EXCEPTIONS, exceptions)
         if status == SUCCESS:
             wh.replace(FRAUD_CASE, product)
+            wh.replace_partition(FRAUD_CASE_STATUS_SNAPSHOT, build_status_snapshot(product, as_of, batch_id),
+                                 "snapshot_date", as_of)
 
     out_dir = Path(out_dir)
     if status == SUCCESS:
@@ -106,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--src", type=Path, default=config.SOURCE_DIR, help="folder with DP_Fraud_Case.csv")
     parser.add_argument("--member-ref", type=Path, default=config.MEMBER_REFERENCE_CSV,
                         help="member_360.csv published by DP_Member_360")
+    parser.add_argument("--account-ref", type=Path, default=config.ACCOUNT_REFERENCE_CSV,
+                        help="account ID mapping reference table")
     parser.add_argument("--db", type=Path, default=config.DB_PATH, help="SQLite database file")
     parser.add_argument("--out", type=Path, default=config.OUT_DIR, help="folder for CSV + data contract")
     parser.add_argument("--as-of", type=date.fromisoformat, default=None, help="run date (default: today)")
@@ -117,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {path}")
         return 0
 
-    res = build(args.src, args.member_ref, args.db, args.out, args.as_of)
+    res = build(args.src, args.member_ref, args.db, args.out, args.as_of, account_ref=args.account_ref)
     print(f"Status: {res.status}   batch: {res.batch_id}")
     print(f"fraud_case rows: {len(res.product)}   rejects: {len(res.rejects)}   exceptions: {len(res.exceptions)}")
     print(res.dq_results[["rule_id", "table_name", "severity", "rows_checked", "rows_failed", "status"]]

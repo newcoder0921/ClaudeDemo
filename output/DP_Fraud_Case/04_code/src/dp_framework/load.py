@@ -63,8 +63,20 @@ class Warehouse:
 
     def append(self, table: Table, df: pd.DataFrame) -> None:
         with self._transaction():
-            self.conn.execute(ddl(table).replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1))
+            self._create_if_missing(table)
             self._insert(table, df)
+
+    def replace_partition(self, table: Table, df: pd.DataFrame, column: str, value) -> None:
+        """Swap one partition (e.g. a snapshot date) atomically; other partitions are untouched."""
+        if column not in table.column_names:
+            raise KeyError(f"{table.name} has no column {column}")
+        with self._transaction():
+            self._create_if_missing(table)
+            self.conn.execute(f'DELETE FROM "{table.name}" WHERE {column} = ?', (to_sql_value(value),))
+            self._insert(table, df)
+
+    def _create_if_missing(self, table: Table) -> None:
+        self.conn.execute(ddl(table).replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1))
 
     def _insert(self, table: Table, df: pd.DataFrame) -> None:
         if df.empty:

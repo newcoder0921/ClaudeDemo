@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 
@@ -23,6 +24,15 @@ def conform_member_id(source_id: str, width: int = 6) -> str:
     if len(digits) > width:
         raise ValueError(f"member ID {source_id!r} exceeds {width} digits")
     return f"M{int(digits):0{width}d}"
+
+
+def load_mapped_account_ids(path, source_system: str) -> set[str]:
+    """Source account IDs that the shared mapping reference table maps for one source system."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"account ID mapping reference table not found: {path}")
+    ref = pd.read_csv(path, dtype=str, keep_default_na=False)
+    return set(ref.loc[ref["source_system"] == source_system, "source_account_id"].str.strip())
 
 
 def build_xref(member: pd.DataFrame, load_ts: datetime, settings: Settings) -> pd.DataFrame:

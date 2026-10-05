@@ -29,6 +29,8 @@ class Rule:
     severity: str
     # Returns a boolean mask of failing rows, or a failure count for table-level checks.
     check: Callable[[Frames], "pd.Series | int"]
+    # Optional switch for rules that only apply when configured; when False the rule passes with 0 rows checked.
+    applies: Callable[[Frames], bool] | None = None
 
 
 @dataclass
@@ -49,6 +51,10 @@ def run_rules(rules: list[Rule], frames: Frames, contracts: Mapping[str, Table])
     results, rejects = [], []
     for rule in rules:
         df = frames[rule.table]
+        if rule.applies is not None and not rule.applies(frames):
+            results.append({"rule_id": rule.rule_id, "description": rule.description, "table_name": rule.table,
+                            "severity": rule.severity, "rows_checked": 0, "rows_failed": 0, "status": "Pass"})
+            continue
         outcome = rule.check(frames)
         if isinstance(outcome, pd.Series):
             mask = outcome.reindex(df.index, fill_value=False).astype(bool)

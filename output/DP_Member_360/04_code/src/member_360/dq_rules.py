@@ -1,4 +1,4 @@
-"""DQ-01..DQ-10 for Member 360, declared on top of the framework rule factories."""
+"""DQ-01..DQ-11 for Member 360, declared on top of the framework rule factories."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -22,9 +22,14 @@ def _debit_credit_mismatch(frames) -> pd.Series:
     return txn["debit_credit_indicator"] != expected
 
 
-def source_rules() -> list[Rule]:
-    """Account is checked before Transaction so rejected accounts cascade to their transactions."""
+def source_rules(mapped_account_ids: set[str]) -> list[Rule]:
+    """Accounts are checked before Transaction so rejected accounts cascade to their transactions."""
+    def unmapped_account(frames) -> pd.Series:
+        return ~frames["Account"]["account_id"].isin(list(mapped_account_ids))
+
     return [
+        Rule("DQ-11", "account_id is in the account ID mapping reference table", "Account", REJECT,
+             unmapped_account),
         foreign_keys_resolve("DQ-09", SOURCES["Account"], REJECT),
         foreign_keys_resolve("DQ-09", SOURCES["Transaction"], REJECT),
         Rule("DQ-10", "debit_credit_indicator matches the transaction type", "Transaction", WARN,

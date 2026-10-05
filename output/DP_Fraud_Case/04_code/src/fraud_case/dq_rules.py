@@ -1,7 +1,8 @@
-"""DQ-01..DQ-12 for Fraud Case, declared on top of the framework rule factories."""
+"""DQ-01..DQ-14 for Fraud Case, declared on top of the framework rule factories."""
 from __future__ import annotations
 
 from datetime import date
+from typing import Mapping
 
 import pandas as pd
 
@@ -67,12 +68,26 @@ def source_rules(as_of: date, settings: Settings) -> list[Rule]:
     ]
 
 
-def product_rules(expected_cases: int) -> list[Rule]:
+def _unexpected_queue(allowed: Mapping[str, tuple[str, ...]] | None):
+    def check(frames) -> pd.Series:
+        df = frames[PRODUCT]
+        return pd.Series([t in allowed and q not in allowed[t]
+                          for t, q in zip(df["case_type"], df["assigned_queue"])], index=df.index)
+    return check
+
+
+def product_rules(expected_cases: int, match_rate: float, settings: Settings) -> list[Rule]:
+    allowed = settings.allowed_queues_by_case_type
+    minimum = settings.min_member_match_rate
+
     def reconcile(frames):
         return abs(len(frames[PRODUCT]) - expected_cases)
 
     def member_missing(frames) -> pd.Series:
         return frames[PRODUCT]["member_found_flag"] != True  # noqa: E712 - object column of bools
+
+    def match_rate_below_minimum(frames) -> int:
+        return 0 if match_rate >= minimum else int(member_missing(frames).sum())
 
     return [
         unique_not_null("DQ-01", PRODUCT, "case_id", BLOCK),
@@ -81,4 +96,8 @@ def product_rules(expected_cases: int) -> list[Rule]:
         allowed_values("DQ-04", FRAUD_CASE, BLOCK),
         Rule("DQ-05", "product row count equals source cases", PRODUCT, BLOCK, reconcile),
         Rule("DQ-12", "member_id found in member_360 (row kept, flagged)", PRODUCT, WARN, member_missing),
+        Rule("DQ-13", "assigned_queue is allowed for the case_type (routing matrix)", PRODUCT, WARN,
+             _unexpected_queue(allowed), applies=lambda frames: allowed is not None),
+        Rule("DQ-14", f"member match rate {match_rate:.2%} (minimum {minimum:.2%})", PRODUCT, BLOCK,
+             match_rate_below_minimum),
     ]

@@ -2,11 +2,13 @@
 import sqlite3
 
 import pandas as pd
+import pytest
 
+from src.member_360 import config
 from src.member_360 import run as run_module
 from tests.conftest import edit_csv, run_build
 
-ALL_RULES = {f"DQ-{n:02d}" for n in range(1, 11)}
+ALL_RULES = {f"DQ-{n:02d}" for n in range(1, 12)}
 
 
 def test_every_rule_runs_and_is_recorded(result):
@@ -28,6 +30,28 @@ def test_foreign_key_failures_cascade_to_transactions(tmp_path, src_copy):
     assert reasons["Account"].startswith("DQ-09")
     assert (res.rejects["table_name"] == "Transaction").sum() == 10
     assert res.status == "SUCCESS"
+
+
+def test_sample_accounts_are_all_mapped(result):
+    dq11 = result.dq_results.set_index("rule_id").loc["DQ-11"]
+    assert (dq11["status"], dq11["rows_checked"]) == ("Pass", 10)
+
+
+def test_account_missing_from_reference_table_is_rejected(tmp_path):
+    ref = tmp_path / "account_id_map.csv"
+    lines = config.ACCOUNT_REFERENCE_CSV.read_text(encoding="utf-8").splitlines(keepends=True)
+    ref.write_text("".join(l for l in lines if not l.startswith("core_banking,A00001,")), encoding="utf-8")
+    res = run_build(tmp_path, account_ref=ref)
+    account_rejects = res.rejects[res.rejects["table_name"] == "Account"]
+    assert account_rejects["row_key"].tolist() == ["A00001"]
+    assert account_rejects["reason"].iloc[0].startswith("DQ-11")
+    txn_rejects = res.rejects[res.rejects["table_name"] == "Transaction"]
+    assert len(txn_rejects) == 10 and txn_rejects["reason"].str.startswith("DQ-09").all()
+
+
+def test_missing_reference_table_fails_clearly(tmp_path):
+    with pytest.raises(FileNotFoundError, match="account ID mapping reference table"):
+        run_build(tmp_path, account_ref=tmp_path / "nope.csv")
 
 
 def test_future_join_date_rejects_member_row(tmp_path, src_copy):

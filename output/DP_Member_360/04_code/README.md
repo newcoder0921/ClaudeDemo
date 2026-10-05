@@ -32,6 +32,11 @@ tests/              # pytest; uses the real sample sources
 pip install pandas pytest
 python -m src.member_360.run --as-of 2026-10-04          # exit 0 = published, 1 = blocked by DQ
 python -m src.member_360.run --digital-proxy             # fill digital_enrolled_flag from C03/C04 usage
+python -m src.member_360.run --account-ref ../../../sources/data/reference/account_id_map.csv
+```
+Account IDs: every core banking account must appear in the shared account ID mapping reference table, `sources/data/reference/account_id_map.csv` (DQ-11 rejects any that don't). To rebuild and check that table, run these from the project root:
+```bash
+python -m tools.build_account_id_map && python -m tools.validate_account_id_map
 ```
 Outputs:
 - `member_360.db`: SQLite tables `raw_*`, `stg_*`, `member_360`, `member_id_xref`, `rejects`, `dq_results`, `run_log`, `dq_exceptions`
@@ -49,6 +54,8 @@ pytest -q
 | A new feed lands (e.g. KYC) | Set the column's `status` to ready in `contracts/member_360.py` and map it in `transform.py` |
 | Turn the Restricted rule or the digital proxy on or off | `Settings` in `src/member_360/config.py` |
 | Add a DQ rule | `src/member_360/dq_rules.py` (use the factories in `dp_framework/dq.py`) |
+| A new source system's account IDs | Add it to `SYSTEMS` in `tools/build_account_id_map.py` and rebuild the table |
+| Change `dp_framework` | Change it here, copy it to every product (`test_framework_sync.py` checks the copies match) |
 
 ## Behaviour notes
 - **Reruns:** each run rebuilds every table in one transaction. `rejects`, `dq_results` and `run_log` keep history, keyed by `dp_batch_id`.

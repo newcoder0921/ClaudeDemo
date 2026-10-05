@@ -1,6 +1,9 @@
 """Member 360 link: unmatched cases are kept, flagged and reported."""
+import sqlite3
+
 import pytest
 
+from src.fraud_case.config import Settings
 from tests.conftest import by_case, run_build
 
 
@@ -22,6 +25,22 @@ def test_member_rule_warns_without_blocking(result):
     dq12 = result.dq_results.set_index("rule_id").loc["DQ-12"]
     assert (dq12["status"], dq12["rows_failed"]) == ("Warn", 90)
     assert result.status == "SUCCESS"
+
+
+def test_match_rate_recorded_without_blocking_by_default(result):
+    dq14 = result.dq_results.set_index("rule_id").loc["DQ-14"]
+    assert dq14["status"] == "Pass"
+    assert "10.00%" in dq14["description"] and "minimum 0.00%" in dq14["description"]
+
+
+def test_match_rate_below_minimum_blocks_and_keeps_previous_product(tmp_path):
+    first = run_build(tmp_path, batch_id="good")
+    res = run_build(tmp_path, batch_id="gated", settings=Settings(min_member_match_rate=0.99))
+    dq14 = res.dq_results.set_index("rule_id").loc["DQ-14"]
+    assert res.status == "BLOCKED" and dq14["status"] == "Fail" and dq14["rows_failed"] == 90
+    with sqlite3.connect(tmp_path / "fraud_case.db") as conn:
+        batches = {r[0] for r in conn.execute("SELECT DISTINCT dp_batch_id FROM fraud_case")}
+    assert first.status == "SUCCESS" and batches == {"good"}
 
 
 def test_missing_member_reference_fails_clearly(tmp_path):

@@ -1,7 +1,7 @@
 # Member 360 – stories and build status
 
 Source: [PRD_Member_360.md](PRD_Member_360.md), section 8, with types from sections 5–6, mapping from section 7 and DQ rules from section 10.
-Code: [04_code/](04_code/README.md) · Tests: `pytest -q` → 98 passed
+Code: [04_code/](04_code/README.md) · Tests: `pytest -q` → 105 passed (includes account ID mapping DQ-11 and shared framework tests)
 
 | Story | Jira | Status |
 |---|---|---|
@@ -51,6 +51,7 @@ Code: [04_code/](04_code/README.md) · Tests: `pytest -q` → 98 passed
 - [x] A critical failure stops publishing and the previous product is kept: `test_blocking_failure_keeps_previous_product`
 - [x] Reject rules remove and log rows: `test_foreign_key_failures_cascade_to_transactions`, `test_future_join_date_rejects_member_row`
 - [x] Known exceptions reported (2 negative balances, 20 dormant/restricted transactions): `test_exception_report`
+- [x] DQ-11 (SCRUM-32): every core banking account is in the account ID mapping reference table; an unmapped account is rejected and its transactions cascade through DQ-09: `test_sample_accounts_are_all_mapped`, `test_account_missing_from_reference_table_is_rejected`, `test_missing_reference_table_fails_clearly`
 
 ## FR-07 Publish and govern
 - [x] Data contract (JSON + MD) with every column, type, nullability, allowed values and status: `test_data_contract_lists_every_column_with_type`

@@ -9,6 +9,9 @@ PROJECT_ROOT = CODE_DIR.parents[2]
 
 SOURCE_DIR = PROJECT_ROOT / "sources" / "data" / "raw"
 SAMPLE_PRODUCT_CSV = PROJECT_ROOT / "data" / "output" / "product" / "DP_Member_360.csv"
+# Shared account ID mapping reference table (built by tools/build_account_id_map.py).
+ACCOUNT_REFERENCE_CSV = PROJECT_ROOT / "sources" / "data" / "reference" / "account_id_map.csv"
+CORE_BANKING_SYSTEM = "core_banking"
 DB_PATH = CODE_DIR / "member_360.db"
 OUT_DIR = CODE_DIR / "out"
 DDL_DIR = CODE_DIR / "sql" / "ddl"

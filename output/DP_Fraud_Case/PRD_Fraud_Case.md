@@ -6,7 +6,7 @@
 | Owner | Product Owner – Fraud & Risk Data |
 | Status | Draft v0.1 |
 | Date | 2026-10-05 |
-| Jira | SCRUM-25 (Feature epic) · stories SCRUM-26 to SCRUM-31 (FR-01 to FR-06) |
+| Jira | SCRUM-25 (Feature epic) · stories SCRUM-26 to SCRUM-32 (FR-01 to FR-07) |
 | Source | sources/data/raw/DP_Fraud_Case.csv (case-management extract) |
 | Target sample | data/output/product/DP_Fraud_Case.csv |
 | Related product | DP_Member_360 (member lookup) |
@@ -59,13 +59,15 @@
 - Ingest the case extract as-is (raw layer).
 - Standardize types per section 5.
 - Lifecycle and loss DQ rules.
-- Member link to member_360 (keep and flag unmatched).
-- Derived metrics (section 6).
+- Member link to member_360 and account link via the account ID mapping reference table (keep and flag unmatched).
+- Derived metrics and SLA by priority (section 6).
+- Daily case status snapshot (history from go-live).
 - Exception report, data contract, DDL.
 
 ### Out of scope
 
-- Account linkage (account ID formats differ – see Q2).
+- Rebuilding status history before go-live.
+- Enforcing queue routing (optional DQ-13 check only).
 - Case notes, attachments, investigator names (PII).
 
 ## 5. Source data inventory and data types
@@ -88,7 +90,7 @@
 | case_id | Identifier | VARCHAR(10) | N | PK | FC0000001 | FC + 7 digits; unique. |
 | member_id | Identifier | VARCHAR(10) | N | → member_360 | M000001 | M + 6 digits (already conformed format). |
 | primary_account_id | Identifier | VARCHAR(10) | N |  | A0000001 | A + 7 digits. Does NOT match banking source (A00001). |
-| case_open_ts | Timestamp | TIMESTAMP | N |  | 8/1/2026 8:00 | Parse M/D/YYYY H:MM. Time zone not stated. |
+| case_open_ts | Timestamp | TIMESTAMP | N |  | 8/1/2026 8:00 | Parse M/D/YYYY H:MM. US Eastern (America/New_York), no offset. |
 | case_type | Category | VARCHAR(30) | N |  | ACH Fraud | Account Takeover, ACH Fraud, Wire Fraud, Identity Review, Card Fraud. |
 | alert_source | Category | VARCHAR(30) | N |  | ML Model | ML Model, Member Report, Operations Review, Rules Engine. |
 | case_status | Category | VARCHAR(15) | N |  | Closed | Open, Investigating, Escalated, Closed. |
@@ -97,13 +99,27 @@
 | confirmed_loss_amount | Currency amount | DECIMAL(15,2) | N |  | $299.50  | Strip $, commas, spaces. 0 until confirmed. |
 | assigned_queue | Category | VARCHAR(30) | N |  | Digital Fraud | Deposit Ops, Digital Fraud, Enhanced Review, Card Ops. |
 | resolution_code | Category | VARCHAR(20) | Y |  | Confirmed Fraud | Confirmed Fraud, False Positive; blank unless Closed. |
-| case_close_ts | Timestamp | TIMESTAMP | Y |  | 8/4/2026 16:00 | Blank unless Closed. |
+| case_close_ts | Timestamp | TIMESTAMP | Y |  | 8/4/2026 16:00 | Blank unless Closed. US Eastern (ET). |
 
 ### 5.2 Reference: member_360 (lookup only)
 
 | Column | Logical type | Physical type | Null? | Key | Example (raw) | Description / conversion rule |
 |---|---|---|---|---|---|---|
 | member_id | Identifier | VARCHAR(10) | N | PK | M000001 | Published by DP_Member_360. |
+
+### 5.3 Reference: account ID mapping table (sources/data/reference/account_id_map.csv)
+
+- Shared reference data (SCRUM-32), built and validated by tools/build_account_id_map.py and tools/validate_account_id_map.py.
+- One row per (source_system, source_account_id): one-to-one within a system, many-to-one across systems.
+- Fraud Case reads the fraud_case_mgmt rows to set account_found_flag.
+
+| Column | Logical type | Physical type | Null? | Key | Example (raw) | Description / conversion rule |
+|---|---|---|---|---|---|---|
+| source_system | Category | VARCHAR(30) | N | PK | fraud_case_mgmt | System the ID comes from. |
+| source_account_id | Identifier | VARCHAR(12) | N | PK | A0000001 | Account ID as that system writes it. |
+| account_id | Identifier | VARCHAR(10) | N |  | A0000001 | Canonical ^A\d{7}$ (zero-padded: A0001, A00001 → A0000001). |
+| in_core_banking | Boolean | BOOLEAN | N |  | TRUE | Canonical ID exists in core banking. |
+| mapping_rule | Category | VARCHAR(40) | N |  | pad_to_7_digits | Rule used to derive account_id. |
 
 ## 6. Target data product: fraud_case
 
@@ -132,6 +148,9 @@
 | case_age_days | Integer | INT | Y |  | ≥ 0; open only | Age at run date. |
 | loss_confirmation_ratio | Ratio | DECIMAL(5,4) | Y |  | 0–1; closed only | Share of suspected loss confirmed. |
 | member_found_flag | Boolean | BOOLEAN | N |  | TRUE / FALSE | Member exists in member_360. |
+| account_found_flag | Boolean | BOOLEAN | N |  | TRUE / FALSE | Account exists in core banking (via account_id_map). |
+| sla_days | Integer | INT | N |  | 30 / 45 / 60 / 90 by priority | SLA for the case priority (configurable). |
+| sla_breached_flag | Boolean | BOOLEAN | N |  | TRUE / FALSE | Elapsed days (to close, or age if open) > sla_days. |
 | dp_load_ts | Timestamp | TIMESTAMP | N |  | YYYY-MM-DD HH:MM:SS | Load time. |
 | dp_batch_id | Identifier | VARCHAR(36) | N |  | UUID | Pipeline run ID. |
 
@@ -157,6 +176,9 @@
 | case_age_days | case_open_ts + run date | Whole days from open_ts to run date; NULL if closed. | Mapped (rule) |
 | loss_confirmation_ratio | confirmed_loss_amount, suspected_loss_amount | Round(confirmed / suspected, 4); NULL if not closed or suspected = 0. | Mapped (rule) |
 | member_found_flag | member_360.member_id | member_id IN member_360. Unmatched rows are kept and reported. | Mapped (lookup) |
+| account_found_flag | account_id_map (fraud_case_mgmt rows) | in_core_banking for primary_account_id; FALSE if unmapped. Kept and reported. | Mapped (lookup) |
+| sla_days | priority | Settings.sla_days_by_priority[priority]. | Mapped (rule) |
+| sla_breached_flag | days_to_close / case_age_days, sla_days | Closed: days_to_close > sla_days; open: case_age_days > sla_days. | Mapped (rule) |
 | dp_load_ts / dp_batch_id | pipeline | Audit columns. | Mapped (pipeline) |
 
 ## 8. Functional requirements
@@ -166,9 +188,10 @@
 | FR-01 | Ingest case extract | Load DP_Fraud_Case.csv unchanged into raw, adding file name, load time and batch ID. |
 | FR-02 | Standardize data types | Convert every column to its section-5 type; bad values and duplicate case_ids go to rejects. |
 | FR-03 | Case lifecycle and loss checks | Enforce the lifecycle and loss rules (DQ-06 to DQ-11); reject broken cases with a reason. |
-| FR-04 | Link to Member 360 | Flag each case's member_found_flag; keep unmatched cases and report them. |
-| FR-05 | Derived case metrics | Calculate is_closed, days_to_close, case_age_days and loss_confirmation_ratio. |
-| FR-06 | Publish, exceptions and govern | Publish the table, CSV, data contract and DDL; exception report; block publish on critical failures. |
+| FR-04 | Link to Member 360 | Flag member_found_flag; keep unmatched cases and report them; DQ-14 match-rate gate (off by default). |
+| FR-05 | Derived case metrics | Calculate is_closed, days_to_close, case_age_days, loss_confirmation_ratio, sla_days and sla_breached_flag. |
+| FR-06 | Publish, exceptions and govern | Publish the table, CSV, data contract (timezone ET) and DDL; exceptions; daily status snapshot; block publish on critical failures. |
+| FR-07 | Account ID mapping (SCRUM-32) | Shared reference table maps every system's account ID to canonical A + 7 digits; set account_found_flag. |
 
 ### User stories
 
@@ -200,25 +223,31 @@
 | DQ-10 | Confirmed Fraud has confirmed_loss > 0 | Medium – warn (switchable to reject) |
 | DQ-11 | case_open_ts not after the run date | High – reject row |
 | DQ-12 | member_id found in member_360 | Medium – warn (row kept, flagged) |
+| DQ-13 | assigned_queue allowed for case_type (only when a routing matrix is configured) | Medium – warn |
+| DQ-14 | Member match rate ≥ configured minimum (default 0 = never blocks) | Critical – block |
 
 ### Acceptance criteria (release)
 
-- All 20 target columns present, with the physical types in section 6.
+- All 23 target columns present, with the physical types in section 6.
+- Open cases past SLA reported as CASE_SLA_BREACHED (27 at 2026-10-04: Critical 15, High 9, Medium 3).
+- 90 cases flagged account_found_flag FALSE and reported as ACCOUNT_NOT_FOUND.
 - All critical DQ rules pass on the sample; 100 rows published.
 - Derived metrics match hand-calculated examples (e.g. FC0000002: 3.00 days, ratio 0.8000).
 - 90 unmatched members appear in the exception report (sample member_360 has 10 members).
 
 ## 11. Open questions and data gaps
 
-| # | Finding (verified against sample) | Impact | Decision needed / owner |
+- All seven questions now have a decision (OpenSpec change resolve-fraud-case-open-decisions). Items marked 'sign-off' are configurable defaults awaiting confirmation.
+
+| # | Finding (verified against sample) | Decision | Status |
 |---|---|---|---|
-| Q1 | member_id M000001–M000100; today's member_360 has only M000001–M000010. | 90 cases unmatched (kept, flagged). | Full member feed into Member 360 – Data Eng |
-| Q2 | primary_account_id is A + 7 digits (A0000001); banking sources use A + 5 (A00001). | Can't link cases to accounts. | Confirm account ID standard / crosswalk – Data Eng |
-| Q3 | Timestamps have no time zone (hours are only 00:00, 08:00 and 16:00). | Day boundaries and SLAs could be off. | Confirm time zone; are times rounded? – Fraud Ops |
-| Q4 | assigned_queue rotates evenly regardless of case_type (e.g. Card Fraud → Deposit Ops). | Queue metrics may mislead. | Confirm routing rules – Fraud Ops |
-| Q5 | All 60 non-closed cases are 30–63 days old at 2026-10-04; 15 are Critical. | Possible SLA breach. | Define SLA days per priority – Fraud Ops |
-| Q6 | Confirmed Fraud with $0 loss: none in sample (all 27 have a loss, ratio 0.35–0.80). | Rule severity choice. | Warn or reject? – Risk |
-| Q7 | Only current status in the extract; no status history. | Can't measure time in each status. | Is a status-history feed available? – Fraud Ops |
+| Q1 | member_id M000001–M000100; today's member_360 has only M000001–M000010. | Keep and flag; DQ-14 records the match rate and blocks below Settings.min_member_match_rate (default 0). Raise once Member 360 has the full feed. | Decided |
+| Q2 | primary_account_id is A + 7 digits (A0000001); banking sources use A + 5 (A00001). | Canonical A + 7 digits via sources/data/reference/account_id_map.csv (SCRUM-32); account_found_flag + ACCOUNT_NOT_FOUND. | Decided |
+| Q3 | Timestamps have no time zone (hours are only 00:00, 08:00 and 16:00). | US Eastern (America/New_York), no offset; declared in the data contract. | Decided |
+| Q4 | assigned_queue rotates evenly regardless of case_type (e.g. Card Fraud → Deposit Ops). | Not enforced; optional DQ-13 warning once Fraud Ops supplies a routing matrix. | Decided – matrix pending |
+| Q5 | All 60 non-closed cases are 30–63 days old at 2026-10-04; 15 are Critical. | SLA by priority: Critical 30, High 45, Medium 60, Low 90 days; CASE_SLA_BREACHED replaces CRITICAL_CASE_AGED (BREAKING). | Decided – Fraud Ops sign-off |
+| Q6 | Confirmed Fraud with $0 loss: none in sample (all 27 have a loss, ratio 0.35–0.80). | Warn (DQ-10): fully recovered funds can leave $0 loss; switch to reject in Settings if needed. | Decided |
+| Q7 | Only current status in the extract; no status history. | Daily fraud_case_status_snapshot (one row per case per run date); history from go-live. | Decided |
 
 ## 12. Dependencies, risks and milestones
 
@@ -241,4 +270,5 @@
 - sources/data/raw/DP_Fraud_Case.csv — 100 rows, columns: case_id, member_id, primary_account_id, case_open_ts, case_type, alert_source, case_status, priority, suspected_loss_amount, confirmed_loss_amount, assigned_queue, resolution_code, case_close_ts
 - data/output/product/DP_Fraud_Case.csv — identical copy, used as the target sample.
 - output/DP_Member_360/04_code/out/member_360.csv — member lookup.
+- sources/data/reference/account_id_map.csv — 110 rows, account ID mapping reference table.
 - Profile (verified): 40 Closed (27 Confirmed Fraud, 13 False Positive), 60 not closed; suspected total $371,309.50; confirmed total $54,753.40; days to close 1–12 (avg 6.3).

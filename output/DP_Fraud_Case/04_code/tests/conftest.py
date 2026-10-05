@@ -11,11 +11,14 @@ AS_OF = date(2026, 10, 4)
 LOAD_TS = datetime(2026, 10, 4, 6, 0, 0)
 # Member 360 as built from today's sources: 10 members, M000001..M000010.
 MEMBER_REF = Path(__file__).parent / "data" / "member_360.csv"
+# Copy of sources/data/reference/account_id_map.csv: 10 core banking accounts, 100 fraud accounts.
+ACCOUNT_REF = Path(__file__).parent / "data" / "account_id_map.csv"
 SOURCE_FILE = config.SOURCE_FILES["Fraud_Case_Extract"]
 
 
 def run_build(tmp_path, src_dir=config.SOURCE_DIR, **kwargs):
     kwargs.setdefault("member_ref", MEMBER_REF)
+    kwargs.setdefault("account_ref", ACCOUNT_REF)
     kwargs.setdefault("as_of", AS_OF)
     kwargs.setdefault("load_ts", LOAD_TS)
     kwargs.setdefault("db_path", tmp_path / "fraud_case.db")

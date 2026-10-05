@@ -6,7 +6,7 @@
 | Owner | Product Owner – Member Data |
 | Status | Draft v0.1 |
 | Date | 2026-10-04 |
-| Jira | SCRUM-17 (Feature epic) · stories SCRUM-18 to SCRUM-24 (FR-01 to FR-07) |
+| Jira | SCRUM-17 (Feature epic) · stories SCRUM-18 to SCRUM-24 (FR-01 to FR-07) · account ID mapping SCRUM-32 |
 | Sources | sources/data/raw/*.csv (8 files) |
 | Target sample | data/output/product/DP_Member_360.csv |
 
@@ -198,6 +198,21 @@
 | debit_credit_indicator | Category | VARCHAR(6) | N |  | Credit | Debit, Credit. |
 | transaction_category | Category | VARCHAR(20) | N |  | Funding | Funding, Cash, ACH, Card, Wire, Fee, Interest. |
 
+### 5.9 Reference: account ID mapping table (sources/data/reference/account_id_map.csv)
+
+- Shared reference data, built and validated by tools/build_account_id_map.py and tools/validate_account_id_map.py.
+- Canonical account ID = A + 7 digits; any source width is zero-padded (A0001, A00001 → A0000001).
+- Grain: one row per (source_system, source_account_id); one-to-one within a system, many-to-one across systems.
+- Member 360 uses it for DQ-11: every core banking account must be mapped.
+
+| Column | Logical type | Physical type | Null? | Key | Example (raw) | Description / conversion rule |
+|---|---|---|---|---|---|---|
+| source_system | Category | VARCHAR(30) | N | PK | core_banking | System the ID comes from (core_banking, fraud_case_mgmt). |
+| source_account_id | Identifier | VARCHAR(12) | N | PK | A00001 | Account ID as that system writes it. |
+| account_id | Identifier | VARCHAR(10) | N |  | A0000001 | Canonical ^A\d{7}$ (zero-padded). |
+| in_core_banking | Boolean | BOOLEAN | N |  | TRUE | Canonical ID exists in core banking. |
+| mapping_rule | Category | VARCHAR(40) | N |  | pad_to_7_digits | Rule used to derive account_id. |
+
 ## 6. Target data product: DP_Member_360
 
 - Grain: one row per member.
@@ -287,6 +302,7 @@
 | DQ-08 | last_profile_update_ts ≤ load time | Medium – warn |
 | DQ-09 | Source FKs resolve (Account→Member, Transaction→Account, etc.) | High – reject row |
 | DQ-10 | Transaction.debit_credit_indicator matches Transaction_Type | Medium – warn |
+| DQ-11 | Every Account.account_id is in the account ID mapping reference table (core_banking) | High – reject row |
 
 ### Acceptance criteria (release)
 
@@ -309,6 +325,7 @@
 | Q8 | balance_after = account current_balance ± that one transaction, not a running balance. | Can't be used for balance history. | Confirm meaning – Data Eng |
 | Q9 | Sample target correlates perfectly: Small Business always Restricted + Review Required; Student always Dormant. | Not realistic test data. | Provide realistic test data – Data Eng |
 | Q10 | Loan / credit card balances are positive like deposits. | Sign convention unclear. | Confirm liability sign convention – Finance |
+| Q11 | Account IDs differ by system: core banking A00001 vs fraud case mgmt A0000001. | Cross-product account joins failed. | DECIDED (SCRUM-32): canonical A + 7 digits via sources/data/reference/account_id_map.csv; enforced by DQ-11 |
 
 ## 12. Dependencies, risks and milestones
 
@@ -347,3 +364,4 @@
 - sources/data/raw/Transaction_Type.csv — 10 rows, columns: transaction_type_id, transaction_type_name, debit_credit_indicator, transaction_category
 
 - data/output/product/DP_Member_360.csv — 100 rows, columns: member_id, member_since_date, member_segment, age_band, home_state, digital_enrolled_flag, kyc_status, risk_rating, relationship_status, last_profile_update_ts
+- sources/data/reference/account_id_map.csv — 110 rows, columns: source_system, source_account_id, account_id, in_core_banking, mapping_rule

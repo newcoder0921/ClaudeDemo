@@ -27,7 +27,7 @@ from . import config
 from .config import Settings
 from .dq_rules import product_rules, source_rules
 from .exceptions import find_exceptions
-from .transform import build_member_360
+from .transform import build_member_360, load_mapped_account_ids
 
 SUCCESS, BLOCKED = "SUCCESS", "BLOCKED"
 DDL_TABLES = [MEMBER_360, MEMBER_ID_XREF, DQ_EXCEPTIONS, REJECTS, DQ_RESULTS, RUN_LOG]
@@ -51,10 +51,11 @@ class RunResult:
 
 def build(src_dir: Path = config.SOURCE_DIR, db_path: Path = config.DB_PATH, out_dir: Path = config.OUT_DIR,
           as_of: date | None = None, settings: Settings = Settings(), batch_id: str | None = None,
-          load_ts: datetime | None = None) -> RunResult:
+          load_ts: datetime | None = None, account_ref: Path = config.ACCOUNT_REFERENCE_CSV) -> RunResult:
     as_of = as_of or date.today()
     batch_id = batch_id or str(uuid.uuid4())
     load_ts = load_ts or datetime.now().replace(microsecond=0)
+    mapped_accounts = load_mapped_account_ids(account_ref, config.CORE_BANKING_SYSTEM)
 
     raw = ingest_all(src_dir, SOURCES, config.SOURCE_FILES, batch_id, load_ts)
 
@@ -63,7 +64,7 @@ def build(src_dir: Path = config.SOURCE_DIR, db_path: Path = config.DB_PATH, out
         staged[name], table_rejects = standardize(raw[name], contract)
         rejects.append(table_rejects)
 
-    source_dq = run_rules(source_rules(), staged, CONTRACTS)
+    source_dq = run_rules(source_rules(mapped_accounts), staged, CONTRACTS)
     staged = source_dq.frames
 
     product, xref = build_member_360(staged, as_of, load_ts, batch_id, settings)
@@ -115,6 +116,8 @@ def _run_log(raw, staged, product, status, batch_id, load_ts) -> pd.DataFrame:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the DP_Member_360 data product.")
     parser.add_argument("--src", type=Path, default=config.SOURCE_DIR, help="folder with the 8 source CSVs")
+    parser.add_argument("--account-ref", type=Path, default=config.ACCOUNT_REFERENCE_CSV,
+                        help="account ID mapping reference table")
     parser.add_argument("--db", type=Path, default=config.DB_PATH, help="SQLite database file")
     parser.add_argument("--out", type=Path, default=config.OUT_DIR, help="folder for CSV + data contract")
     parser.add_argument("--as-of", type=date.fromisoformat, default=None, help="run date (default: today)")
@@ -127,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {path}")
         return 0
 
-    res = build(args.src, args.db, args.out, args.as_of, Settings(digital_proxy=args.digital_proxy))
+    res = build(args.src, args.db, args.out, args.as_of, Settings(digital_proxy=args.digital_proxy),
+                account_ref=args.account_ref)
     print(f"Status: {res.status}   batch: {res.batch_id}")
     print(f"member_360 rows: {len(res.product)}   rejects: {len(res.rejects)}   exceptions: {len(res.exceptions)}")
     print(res.dq_results[["rule_id", "table_name", "severity", "rows_checked", "rows_failed", "status"]]

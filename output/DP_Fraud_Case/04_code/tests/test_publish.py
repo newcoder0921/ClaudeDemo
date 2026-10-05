@@ -27,14 +27,14 @@ def test_blocking_rules_pass(result, rule_id):
 
 
 def test_every_rule_recorded(result):
-    assert set(result.dq_results["rule_id"]) == {f"DQ-{n:02d}" for n in range(1, 13)}
+    assert set(result.dq_results["rule_id"]) == {f"DQ-{n:02d}" for n in range(1, 15)}
 
 
 def test_product_table_declares_contract_types(result):
     with sqlite3.connect(result.db_path) as conn:
         declared = [(r[1], r[2]) for r in conn.execute("PRAGMA table_info(fraud_case)")]
     assert declared == [(c.name, c.type) for c in FRAUD_CASE.columns]
-    assert len(declared) == 20
+    assert len(declared) == 23
 
 
 def test_csv_starts_with_sample_columns(result):
@@ -60,6 +60,16 @@ def test_data_contract(result):
     assert [(c["name"], c["type"]) for c in contract["columns"]] == [(c.name, c.type) for c in FRAUD_CASE.columns]
     assert contract["primary_key"] == ["case_id"]
     assert (result.out_dir / "data_contract.md").exists()
+
+
+def test_contract_declares_eastern_time(result):
+    contract = json.loads((result.out_dir / "data_contract.json").read_text(encoding="utf-8"))
+    assert contract["timezone"] == "America/New_York"
+    descriptions = {c["name"]: c["description"] for c in contract["columns"]}
+    assert "ET" in descriptions["case_open_ts"] and "ET" in descriptions["case_close_ts"]
+    with open(result.out_dir / "fraud_case.csv", newline="", encoding="utf-8") as f:
+        row = next(r for r in csv.DictReader(f) if r["case_id"] == "FC0000001")
+    assert row["case_open_ts"] == "2026-08-01 08:00:00"
 
 
 def test_committed_ddl_matches_contracts():

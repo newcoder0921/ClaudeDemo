@@ -17,6 +17,9 @@ CREATE TABLE fraud_case (
     case_age_days INT,
     loss_confirmation_ratio DECIMAL(5,4),
     member_found_flag BOOLEAN NOT NULL,
+    account_found_flag BOOLEAN NOT NULL,
+    sla_days INT NOT NULL,
+    sla_breached_flag BOOLEAN NOT NULL,
     dp_load_ts TIMESTAMP NOT NULL,
     dp_batch_id VARCHAR(36) NOT NULL,
     PRIMARY KEY (case_id)
